@@ -211,6 +211,9 @@
     <plurals name="module_release_assets_download_count">
         <item quantity="other">%d 次下载</item>
     </plurals>
+    <string name="downloading">正在下载…</string>
+    <string name="download_failed">下载失败：%s</string>
+    <string name="downloaded_to">已下载至 %s</string>
     <!-- Colors -->
     <string name="color_sakura">樱花</string>
     <string name="color_red">红色</string>
