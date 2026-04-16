@@ -39,11 +39,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.text.method.LinkMovementMethod;
 import android.widget.ArrayAdapter;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -85,8 +81,12 @@ import org.lsposed.manager.util.NavUtil;
 import org.lsposed.manager.util.SimpleStatefulAdaptor;
 import org.lsposed.manager.util.chrome.CustomTabsURLSpan;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
+import io.noties.markwon.Markwon;
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin;
+import io.noties.markwon.html.HtmlPlugin;
+import io.noties.markwon.image.glide.GlideImagesPlugin;
+import io.noties.markwon.linkify.LinkifyPlugin;
+
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -110,6 +110,7 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
     OnlineModule module;
     private ReleaseAdapter releaseAdapter;
     private InformationAdapter informationAdapter;
+    private Markwon markwon;
 
     @Nullable
     @Override
@@ -147,6 +148,12 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
         binding.toolbar.setOnClickListener(v -> binding.appBar.setExpanded(true, true));
         releaseAdapter = new ReleaseAdapter();
         informationAdapter = new InformationAdapter();
+        markwon = Markwon.builder(requireContext())
+            .usePlugin(HtmlPlugin.create())
+            .usePlugin(GlideImagesPlugin.create(requireContext()))
+            .usePlugin(LinkifyPlugin.create())
+            .usePlugin(StrikethroughPlugin.create())
+            .build();
         RepoLoader.getInstance().addListener(this);
         return binding.getRoot();
     }
@@ -165,78 +172,12 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
         }
     }
 
-    private void renderGithubMarkdown(WebView view, @Nullable String text) {
-        try {
-            view.setBackgroundColor(Color.TRANSPARENT);
-            var setting = view.getSettings();
-            setting.setOffscreenPreRaster(true);
-            setting.setDomStorageEnabled(true);
-            setting.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-            setting.setAllowContentAccess(false);
-            setting.setAllowFileAccessFromFileURLs(true);
-            setting.setAllowFileAccess(false);
-            setting.setGeolocationEnabled(false);
-            setting.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
-            setting.setTextZoom(80);
-            String body;
-            String direction;
-            if (getResources().getConfiguration().getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
-                direction = "rtl";
-            } else {
-                direction = "ltr";
-            }
-            if (text == null) {
-                text = "<center>" + App.getInstance().getString(R.string.list_empty) + "</center>";
-            }
-            if (ResourceUtils.isNightMode(getResources().getConfiguration())) {
-                body = App.HTML_TEMPLATE_DARK.get().replace("@dir@", direction).replace("@body@", text);
-            } else {
-                body = App.HTML_TEMPLATE.get().replace("@dir@", direction).replace("@body@", text);
-            }
-            view.setWebViewClient(new WebViewClient() {
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                    NavUtil.startURL(requireActivity(), request.getUrl());
-                    return true;
-                }
-
-                @Nullable
-                @Override
-                public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                    if (!request.getUrl().getScheme().startsWith("http")) return null;
-                    var client = App.getOkHttpClient();
-                    var call = client.newCall(
-                            new Request.Builder()
-                                    .url(request.getUrl().toString())
-                                    .method(request.getMethod(), null)
-                                    .headers(Headers.of(request.getRequestHeaders()))
-                                    .build());
-                    try {
-                        Response reply = call.execute();
-                        var header = reply.header("content-type", "image/*;charset=utf-8");
-                        String[] contentTypes = new String[0];
-                        if (header != null) {
-                            contentTypes = header.split(";\\s*");
-                        }
-                        var mimeType = contentTypes.length > 0 ? contentTypes[0] : "image/*";
-                        var charset = contentTypes.length > 1 ? contentTypes[1].split("=\\s*")[1] : "utf-8";
-                        var body = reply.body();
-                        if (body == null) return null;
-                        return new WebResourceResponse(
-                                mimeType,
-                                charset,
-                                body.byteStream()
-                        );
-                    } catch (Throwable e) {
-                        return new WebResourceResponse("text/html", "utf-8", new ByteArrayInputStream(Log.getStackTraceString(e).getBytes(StandardCharsets.UTF_8)));
-                    }
-                }
-            });
-            view.loadDataWithBaseURL("https://github.com", body, "text/html",
-                    StandardCharsets.UTF_8.name(), null);
-        } catch (Throwable e) {
-            Log.e(App.TAG, "render readme", e);
+    private void renderGithubMarkdown(TextView view, @Nullable String text) {
+        if (text == null) {
+            text = App.getInstance().getString(R.string.list_empty);
         }
+        view.setMovementMethod(LinkMovementMethod.getInstance());
+        markwon.setMarkdown(view, text);
     }
 
     @Override
@@ -500,7 +441,7 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
         class ViewHolder extends RecyclerView.ViewHolder {
             TextView title;
             TextView publishedTime;
-            WebView description;
+            TextView description;
             MaterialButton openInBrowser;
             MaterialButton viewAssets;
             CircularProgressIndicator progress;

@@ -39,7 +39,6 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.WebView;
 import android.widget.Filter;
 import android.widget.Filterable;
 import android.widget.TextView;
@@ -91,7 +90,6 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
     protected SearchView searchView;
     private SearchView.OnQueryTextListener mSearchListener;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
-    private boolean preLoadWebview = true;
 
     private final RepoLoader repoLoader = RepoLoader.getInstance();
     private final ModuleUtil moduleUtil = ModuleUtil.getInstance();
@@ -192,12 +190,10 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
                 @Override
                 public void onViewAttachedToWindow(@NonNull View arg0) {
                     binding.appBar.setExpanded(false, true);
-                    binding.recyclerView.setNestedScrollingEnabled(false);
                 }
 
                 @Override
                 public void onViewDetachedFromWindow(@NonNull View v) {
-                    binding.recyclerView.setNestedScrollingEnabled(true);
                 }
             });
             searchView.findViewById(androidx.appcompat.R.id.search_edit_frame).setLayoutDirection(View.LAYOUT_DIRECTION_INHERIT);
@@ -229,10 +225,6 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
     public void onResume() {
         super.onResume();
         forEachAdapter(RepoAdapter::refresh);
-        if (preLoadWebview) {
-            mHandler.postDelayed(() -> new WebView(requireContext()), 500);
-            preLoadWebview = false;
-        }
     }
 
     @Override
@@ -434,7 +426,7 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
         }
 
         public void refresh() {
-            runAsync(() -> adapter.setData(repoLoader.getOnlineModules()));
+            runAsync(() -> setData(repoLoader.getOnlineModules()));
         }
 
         @Override

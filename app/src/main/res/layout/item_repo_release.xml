@@ -67,13 +67,13 @@
             app:layout_constraintWidth_max="wrap"
             tools:text="@tools:sample/lorem" />
 
-        <org.lsposed.manager.ui.widget.ScrollWebView
+        <TextView
             android:id="@+id/description"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_vertical"
-            android:scrollbars="none"
-            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?android:attr/textColorSecondary"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="1.0"
             app:layout_constraintStart_toStartOf="@+id/published_Time"
