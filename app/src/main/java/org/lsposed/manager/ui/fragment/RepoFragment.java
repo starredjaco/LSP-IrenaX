@@ -32,6 +32,7 @@ import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
+import android.util.SparseArray;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -48,13 +49,19 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.widget.SearchView;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.core.view.MenuProvider;
+import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.viewpager2.adapter.FragmentStateAdapter;
+
+import com.google.android.material.tabs.TabLayout;
+import com.google.android.material.tabs.TabLayoutMediator;
 
 import org.lsposed.manager.App;
 import org.lsposed.manager.R;
 import org.lsposed.manager.databinding.FragmentRepoBinding;
 import org.lsposed.manager.databinding.ItemOnlinemoduleBinding;
+import org.lsposed.manager.databinding.SwiperefreshRecyclerviewBinding;
 import org.lsposed.manager.repo.RepoLoader;
 import org.lsposed.manager.repo.model.OnlineModule;
 import org.lsposed.manager.ui.widget.EmptyStateRecyclerView;
@@ -70,7 +77,10 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import rikka.core.util.LabelComparator;
 import rikka.core.util.ResourceUtils;
@@ -85,26 +95,21 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
 
     private final RepoLoader repoLoader = RepoLoader.getInstance();
     private final ModuleUtil moduleUtil = ModuleUtil.getInstance();
-    private RepoAdapter adapter;
-    private final RecyclerView.AdapterDataObserver observer = new RecyclerView.AdapterDataObserver() {
-        @Override
-        public void onChanged() {
-            binding.swipeRefreshLayout.setRefreshing(!adapter.isLoaded());
-        }
-    };
+
+    private final SparseArray<RepoAdapter> adapters = new SparseArray<>();
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         mSearchListener = new SearchView.OnQueryTextListener() {
             @Override
             public boolean onQueryTextSubmit(String query) {
-                adapter.getFilter().filter(query);
+                forEachAdapter(a -> a.getFilter().filter(query));
                 return false;
             }
 
             @Override
             public boolean onQueryTextChange(String newText) {
-                adapter.getFilter().filter(newText);
+                forEachAdapter(a -> a.getFilter().filter(newText));
                 return false;
             }
         };
@@ -116,21 +121,25 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         binding = FragmentRepoBinding.inflate(getLayoutInflater(), container, false);
         binding.appBar.setLiftable(true);
-        binding.recyclerView.getBorderViewDelegate().setBorderVisibilityChangedListener((top, oldTop, bottom, oldBottom) -> binding.appBar.setLifted(!top));
         setupToolbar(binding.toolbar, binding.clickView, R.string.module_repo, R.menu.menu_repo);
         binding.toolbar.setNavigationIcon(null);
-        adapter = new RepoAdapter();
-        adapter.setHasStableIds(true);
-        adapter.registerAdapterDataObserver(observer);
-        binding.recyclerView.setAdapter(adapter);
-        binding.recyclerView.setHasFixedSize(true);
-        binding.recyclerView.setLayoutManager(new LinearLayoutManager(requireActivity()));
-        RecyclerViewKt.fixEdgeEffect(binding.recyclerView, false, true);
-        binding.swipeRefreshLayout.setOnRefreshListener(adapter::fullRefresh);
-        binding.swipeRefreshLayout.setProgressViewEndTarget(true, binding.swipeRefreshLayout.getProgressViewEndOffset());
+
+        binding.viewPager.setAdapter(new RepoPagerAdapter(this));
+        new TabLayoutMediator(binding.tabLayout, binding.viewPager, (tab, position) -> {
+            tab.setText(position == 0 ? R.string.tab_global : R.string.tab_chinese);
+        }).attach();
+
+        binding.tabLayout.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            ViewGroup vg = (ViewGroup) binding.tabLayout.getChildAt(0);
+            int tabLayoutWidth = IntStream.range(0, binding.tabLayout.getTabCount()).map(i -> vg.getChildAt(i).getWidth()).sum();
+            if (tabLayoutWidth <= binding.getRoot().getWidth()) {
+                binding.tabLayout.setTabMode(TabLayout.MODE_FIXED);
+                binding.tabLayout.setTabGravity(TabLayout.GRAVITY_FILL);
+            }
+        });
+
         View.OnClickListener l = v -> {
-            if (searchView.isIconified()) {
-                binding.recyclerView.smoothScrollToPosition(0);
+            if (searchView == null || searchView.isIconified()) {
                 binding.appBar.setExpanded(true, true);
             }
         };
@@ -213,14 +222,13 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
         mHandler.removeCallbacksAndMessages(null);
         repoLoader.removeListener(this);
         moduleUtil.removeListener(this);
-        adapter.unregisterAdapterDataObserver(observer);
         binding = null;
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        adapter.refresh();
+        forEachAdapter(RepoAdapter::refresh);
         if (preLoadWebview) {
             mHandler.postDelayed(() -> new WebView(requireContext()), 500);
             preLoadWebview = false;
@@ -229,9 +237,7 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
 
     @Override
     public void onRepoLoaded() {
-        if (adapter != null) {
-            adapter.refresh();
-        }
+        forEachAdapter(RepoAdapter::refresh);
         updateRepoSummary();
     }
 
@@ -252,19 +258,47 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
         if (itemId == R.id.item_sort_by_name) {
             item.setChecked(true);
             App.getPreferences().edit().putInt("repo_sort", 0).apply();
-            adapter.refresh();
+            forEachAdapter(RepoAdapter::refresh);
         } else if (itemId == R.id.item_sort_by_update_time) {
             item.setChecked(true);
             App.getPreferences().edit().putInt("repo_sort", 1).apply();
-            adapter.refresh();
+            forEachAdapter(RepoAdapter::refresh);
         } else if (itemId == R.id.item_upgradable_first) {
             item.setChecked(!item.isChecked());
             App.getPreferences().edit().putBoolean("upgradable_first", item.isChecked()).apply();
-            adapter.refresh();
+            forEachAdapter(RepoAdapter::refresh);
         } else {
             return false;
         }
         return true;
+    }
+
+    private void forEachAdapter(Consumer<RepoAdapter> action) {
+        for (int i = 0; i < adapters.size(); i++) {
+            action.accept(adapters.valueAt(i));
+        }
+    }
+
+    private static class RepoPagerAdapter extends FragmentStateAdapter {
+
+        public RepoPagerAdapter(@NonNull Fragment fragment) {
+            super(fragment);
+        }
+
+        @NonNull
+        @Override
+        public Fragment createFragment(int position) {
+            Bundle args = new Bundle();
+            args.putInt("position", position);
+            RepoItemFragment fragment = new RepoItemFragment();
+            fragment.setArguments(args);
+            return fragment;
+        }
+
+        @Override
+        public int getItemCount() {
+            return 2;
+        }
     }
 
     private class RepoAdapter extends EmptyStateRecyclerView.EmptyStateAdapter<RepoAdapter.ViewHolder> implements Filterable {
